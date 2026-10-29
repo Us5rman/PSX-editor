@@ -1,3 +1,5 @@
+import java.net.URL
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -57,7 +59,7 @@ val fetchThree by tasks.registering {
             val target = File(libsDir, name)
             if (!target.exists() || target.length() == 0L) {
                 val tmp = File(libsDir, "$name.part")
-                java.net.URL(url).openStream().use { input ->
+                URL(url).openStream().use { input ->
                     tmp.outputStream().use { input.copyTo(it) }
                 }
                 tmp.renameTo(target)
