@@ -509,7 +509,7 @@ function modeUI2(){const b=bodyEl,row=(l,h)=>{const d=document.createElement('di
 /* ===== IK / ریگ / ریگ خودکار ===== */
 const V3=THREE.Vector3,Q4=THREE.Quaternion,RIG={cur:'base',sel:null,err:''},WS={sub:'move',mode:'add',size:6,str:.5,sym:true};
 let BASEI,BASERT,IMP=null,BG=null;const HST={};
-const HEAT=new THREE.MeshBasicMaterial({toneMapped:false,vertexColors:true,skinning:true,side:THREE.DoubleSide}),fileIn=document.createElement('input');fileIn.type='file';fileIn.accept='.glb,.gltf,.obj';
+const HEAT=new THREE.MeshBasicMaterial({toneMapped:false,vertexColors:true,skinning:true,side:THREE.DoubleSide}),fileIn=document.createElement('input');fileIn.type='file';fileIn.accept='.glb,.gltf,.obj,.pak';
 const curRT=()=>RIG.cur=='imp'&&IMP?IMP.rt:BASERT;
 function syncSkin(){const g=bodyM().geometry,si=g.attributes.skinIndex,sw=g.attributes.skinWeight;for(let i=0;i<IDX.length;i++){const s=IDX[i]*4;for(let k=0;k<4;k++){si.array[i*4+k]=SI[s+k];sw.array[i*4+k]=SW[s+k]}}si.needsUpdate=sw.needsUpdate=true}
 /* اصلاح ریگ ساعد و مچ: استخوان نیمه‌چرخان (twist) + وزن‌های نرم */
@@ -672,7 +672,7 @@ function autoRig(root,opt){const ex=!!(opt&&opt.exact);RIG.err='';root.updateMat
  const mm=mats.map(m=>new THREE.MeshLambertMaterial({map:m&&m.map||null,color:m&&m.color?m.color.clone():0xcccccc,side:THREE.DoubleSide,skinning:true})),mesh=new THREE.SkinnedMesh(geo,mm.length>1?mm:mm[0]);
  mesh.name='imp';mesh.frustumCulled=false;impRoot.add(mesh);impRoot.updateMatrixWorld(true);mesh.bind(new THREE.Skeleton(B),new THREE.Matrix4());rt.mesh=mesh;wSync(false,rt);
  impFin(impRoot,B,rt,segs,ex)}
-async function impFile(){const f=fileIn.files[0];if(!f)return;const ext=f.name.split('.').pop().toLowerCase();try{let root;if(ext=='obj')root=new THREE.OBJLoader().parse(await f.text());else{const buf=await f.arrayBuffer();root=await new Promise((ok,no)=>new THREE.GLTFLoader().parse(buf,'',g=>ok(g.scene),no))}autoRig(root)}catch(e){RIG.err=String(e.message||e);render()}fileIn.value=''}
+async function impFile(){const f=fileIn.files[0];if(!f)return;const ext=f.name.split('.').pop().toLowerCase();if(ext=='pak'){fileIn.value='';pakImport(f);return}try{let root;if(ext=='obj')root=new THREE.OBJLoader().parse(await f.text());else{const buf=await f.arrayBuffer();root=await new Promise((ok,no)=>new THREE.GLTFLoader().parse(buf,'',g=>ok(g.scene),no))}autoRig(root)}catch(e){RIG.err=String(e.message||e);render()}fileIn.value=''}
 function rigUI(row,sl,grid){grid([['مدل پایه',()=>useRig('base'),RIG.cur=='base'],['مدل وارد شده',()=>useSlot('imp'),onSlot('imp')],['پریست ۲ (مرد)',pre2Go,onSlot('p2')]]);grid([['ریگ خودکار: پریست ۱ (ساده)',()=>{RIGPRE=1;render()},RIGPRE==1],['ریگ خودکار: پریست ۲ (کامل)',()=>{RIGPRE=2;render()},RIGPRE==2]]);grid([['@up وارد کردن مدل انسانی (GLB/OBJ) و ریگ خودکار',()=>fileIn.click()]]);if(RIG.err)row('خطا',RIG.err);
  grid([['@tool ریست کامل ریگ',()=>{pose0();bones.forEach(b=>b.scale.set(1,1,1));setR(curRT().init);hist.length=0;hp=0;upBar();render()}]]);grid([['مفصل‌ها',()=>setSub('move'),WS.sub=='move'],['وزن‌ها',()=>setSub('paint'),WS.sub=='paint']]);row('استخوان','<b>'+(RIG.sel?RIG.sel.name:'— (روی نقطه‌ی استخوان بزن)')+'</b>');
  if(WS.sub=='move')grid([['قرینه',()=>{WS.sym=!WS.sym;render()},WS.sym]]);
@@ -898,8 +898,8 @@ const SL=[],sB=(en,fa,f,par)=>{const b=btn('',f);(par||stW.d).appendChild(b);SL.
 const saveBlob=(b,n)=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=n;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5e3)};
 function expGLB(){pose0();new THREE.GLTFExporter().parse(model,buf=>saveBlob(new Blob([buf],{type:'model/gltf-binary'}),'psx_character.glb'),{binary:true,animations:clipA()})}
 function projSave(){try{const o={v:1,s:JSON.parse(snap()),P:Array.from(BG.P,v=>+v.toFixed(3)),k:An.keys,n:An.n,L:{}};for(const k in LAY)if(k!='imp')o.L[k]=LAY[k].toDataURL('image/png');saveBlob(new Blob([JSON.stringify(o)],{type:'application/json'}),'psx_project.json')}catch(e){alert(e.message)}}
-const projIn=document.createElement('input');projIn.type='file';projIn.accept='.json,application/json';
-projIn.onchange=async()=>{const f=projIn.files[0];projIn.value='';if(!f)return;try{const o=JSON.parse(await f.text());if(RIG.cur!='base')useRig('base');BG.P.set(o.P);fr();remesh();loadS(JSON.stringify(o.s));An.keys=o.k||{};if(o.n)An.n=o.n;
+const projIn=document.createElement('input');projIn.type='file';projIn.accept='.json,.pak,application/json';
+projIn.onchange=async()=>{const f=projIn.files[0];projIn.value='';if(!f)return;if(/\.pak$/i.test(f.name)){pakImport(f);return}try{const o=JSON.parse(await f.text());if(RIG.cur!='base')useRig('base');BG.P.set(o.P);fr();remesh();loadS(JSON.stringify(o.s));An.keys=o.k||{};if(o.n)An.n=o.n;
  for(const k in LAY)if(k!='imp'&&!(o.L&&k in o.L)){try{lctx(k).clearRect(0,0,1024,1024);comp(k)}catch(e){}}
  await Promise.all(Object.entries(o.L||{}).map(([k,u])=>new Promise(ok=>{const im=new Image();im.onload=()=>{try{const x=lctx(k);x.clearRect(0,0,1024,1024);x.drawImage(im,0,0);comp(k)}catch(e){}ok()};im.onerror=ok;im.src=u})));
  hist.length=0;hp=0;upBar();render()}catch(e){alert(e.message)}};
@@ -909,7 +909,7 @@ sB('@theme Theme (auto / light / dark)','@theme تم (خودکار / روشن / 
 sT('Project','پروژه');
 sB('@new New project','@new پروژه جدید',()=>{if(confirm(LANG=='en'?'Discard everything and start a new project?':'همه چیز پاک شود و پروژه جدید شروع شود؟'))location.reload()});
 {const t=sTwo();sB('@save Save','@save سیو',projSave,t);sB('@load Load','@load لود',()=>projIn.click(),t)}
-sB('@open Open model (GLB/OBJ)','@open اپن مدل (GLB/OBJ)',()=>fileIn.click());
+sB('@open Open model (GLB/OBJ/PAK)','@open اپن مدل (GLB/OBJ/PAK)',()=>fileIn.click());
 sB('@export Export GLB','@export خروجی GLB',expGLB);
 sT('Main model (switch / revert)','مدل اصلی (تغییر / بازگشت)');
 const MB=[];{const t=sTwo();MB.push(sB('Base','پایه',()=>useRig('base'),t),sB('Imported','وارد شده',()=>useSlot('imp'),t),sB('Preset 2','پریست ۲',()=>pre2Go(),t))}
