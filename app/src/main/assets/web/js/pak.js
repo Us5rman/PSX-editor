@@ -747,7 +747,17 @@
       case 'PF_B8G8R8A8': rgba = bgra(d, w, h); break;
       default: throw new Error('Unsupported texture format ' + fmt);
     }
-    return { w, h, rgba, format: fmt, sx, sy };
+    let mask = false;
+    if (fmt === 'PF_DXT3' || fmt === 'PF_DXT5' || fmt === 'PF_B8G8R8A8') {
+      let lo = 0, hi = 0, tot = 0;
+      for (let i = 3; i < rgba.length; i += 28) {
+        const a = rgba[i];
+        if (a < 16) lo++; else if (a > 240) hi++;
+        tot++;
+      }
+      mask = tot > 0 && (lo + hi) / tot > 0.85 && lo / tot > 0.02 && hi / tot > 0.02;
+    }
+    return { w, h, rgba, format: fmt, sx, sy, mask };
   }
 
   function gray8(d, w, h) {
@@ -795,6 +805,42 @@
     return best ? best.pkg : null;
   }
 
+  function cullStray(mesh) {
+    const p = mesh.pos, secs = mesh.secs;
+    const box = secs.map(sc => {
+      const b = [1e9, 1e9, 1e9, -1e9, -1e9, -1e9];
+      for (let v = sc.bv; v < sc.bv + sc.nv; v++) {
+        for (let k = 0; k < 3; k++) {
+          const x = p[v * 3 + k];
+          if (x < b[k]) b[k] = x;
+          if (x > b[k + 3]) b[k + 3] = x;
+        }
+      }
+      return b;
+    });
+    const order = secs.map((_, i) => i).sort((a, b) => secs[b].nv - secs[a].nv);
+    const total = secs.reduce((a, sc) => a + sc.nv, 0);
+    const body = [1e9, 1e9, 1e9, -1e9, -1e9, -1e9];
+    let acc = 0;
+    for (const i of order) {
+      for (let k = 0; k < 3; k++) { body[k] = Math.min(body[k], box[i][k]); body[k + 3] = Math.max(body[k + 3], box[i][k + 3]); }
+      acc += secs[i].nv;
+      if (acc >= total * 0.8) break;
+    }
+    const pad = Math.max(body[4] - body[1], 0.01) * 0.3;
+    const keep = [];
+    secs.forEach((sc, i) => {
+      let ok = true;
+      for (let k = 0; k < 3; k++) {
+        const c = (box[i][k] + box[i][k + 3]) / 2;
+        if (c < body[k] - pad || c > body[k + 3] + pad) ok = false;
+      }
+      if (ok) keep.push(sc);
+    });
+    mesh.dropped = secs.length - keep.length;
+    if (keep.length) mesh.secs = keep;
+  }
+
   async function loadSkinMesh(pak, meshBase, onStatus) {
     const say = onStatus || (() => {});
     const pkg = await loadPackage(pak, meshBase);
@@ -802,6 +848,7 @@
     say('mesh');
     const mesh = parseSkeletalMesh(pkg.uexp, pkg.pk);
     toEditorSpace(mesh);
+    cullStray(mesh);
 
     const texCache = new Map();
     const matTex = [];
@@ -854,11 +901,13 @@
           tx.flipY = false;
           tx.encoding = THREE.sRGBEncoding;
           tx.wrapS = tx.wrapT = THREE.RepeatWrapping;
+          if (typeof R !== 'undefined' && R.capabilities) tx.anisotropy = R.capabilities.getMaxAnisotropy();
           texObjs.set(t, tx);
         }
         map = texObjs.get(t);
       }
       const mat = new THREE.MeshLambertMaterial({ map, color: map ? 0xffffff : 0xcccccc, side: THREE.DoubleSide });
+      if (t && t.mask) mat.alphaTest = 0.5;
       matObjs.set(mi, mat);
       return mat;
     };
