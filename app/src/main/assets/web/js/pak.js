@@ -533,13 +533,22 @@
       nor[i * 3] = x; nor[i * 3 + 1] = y; nor[i * 3 + 2] = z;
     }
     o = tanStart + N * tes;
-    const ues = dv.getUint32(o, true);
-    if (ues !== (fullUV ? 8 : 4) * nuv || dv.getUint32(o + 4, true) !== N) throw new Error('UV buffer not found');
+    q = scan(dv, o, o + 512, p => {
+      const e2 = dv.getUint32(p, true);
+      return e2 >= 4 && e2 <= 64 && e2 % 4 === 0 && dv.getUint32(p + 4, true) === N;
+    });
+    if (q < 0) {
+      const w = [];
+      for (let i = 0; i < 6; i++) w.push(dv.getUint32(o + i * 4, true));
+      throw new Error('UV buffer not found (uv sets ' + nuv + ', tangent size ' + tes + ', next ' + w.join(',') + ')');
+    }
+    const ues = dv.getUint32(q, true);
+    const full = ues >= 8 * nuv ? true : (ues === 4 * nuv ? false : fullUV);
     const uv = new Float32Array(N * 2);
-    o += 8;
+    o = q + 8;
     for (let i = 0; i < N; i++) {
       const b = o + i * ues;
-      if (fullUV) { uv[i * 2] = dv.getFloat32(b, true); uv[i * 2 + 1] = dv.getFloat32(b + 4, true); }
+      if (full) { uv[i * 2] = dv.getFloat32(b, true); uv[i * 2 + 1] = dv.getFloat32(b + 4, true); }
       else { uv[i * 2] = half(dv.getUint16(b, true)); uv[i * 2 + 1] = half(dv.getUint16(b + 2, true)); }
     }
     return { mats, secs, pos, nor, uv, idx, nVerts: N };
