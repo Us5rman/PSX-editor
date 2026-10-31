@@ -731,70 +731,73 @@
     out[o + 2] = (c & 31) * 255 / 31 | 0;
   }
 
+  function alphaPalette(a0, a1, pal) {
+    pal[0] = a0;
+    pal[1] = a1;
+    if (a0 > a1) for (let i = 1; i < 7; i++) pal[1 + i] = ((7 - i) * a0 + i * a1) / 7 | 0;
+    else { for (let i = 1; i < 5; i++) pal[1 + i] = ((5 - i) * a0 + i * a1) / 5 | 0; pal[6] = 0; pal[7] = 255; }
+  }
+
+  function alphaIndices(src, p, pal, out) {
+    const b0 = src[p + 2] | (src[p + 3] << 8) | (src[p + 4] << 16);
+    const b1 = src[p + 5] | (src[p + 6] << 8) | (src[p + 7] << 16);
+    for (let i = 0; i < 8; i++) { out[i] = pal[(b0 >> (3 * i)) & 7]; out[8 + i] = pal[(b1 >> (3 * i)) & 7]; }
+  }
+
   function decodeDXT(src, w, h, kind) {
     const out = new Uint8Array(w * h * 4);
     const bw = Math.max(1, w >> 2), bh = Math.max(1, h >> 2);
     const bsz = kind === 1 ? 8 : 16;
-    const col = new Uint8Array(16);
-    const alp = new Uint8Array(16);
+    const alp = new Uint8Array(16), apal = new Uint8Array(8), pal = new Uint8Array(16);
     let p = 0;
     for (let by = 0; by < bh; by++) {
       for (let bx = 0; bx < bw; bx++, p += bsz) {
         let cp = p;
         if (kind === 5) {
-          const a0 = src[p], a1 = src[p + 1];
-          const pal = [a0, a1];
-          if (a0 > a1) for (let i = 1; i < 7; i++) pal.push(((7 - i) * a0 + i * a1) / 7 | 0);
-          else { for (let i = 1; i < 5; i++) pal.push(((5 - i) * a0 + i * a1) / 5 | 0); pal.push(0, 255); }
-          let bits = 0n;
-          for (let i = 0; i < 6; i++) bits |= BigInt(src[p + 2 + i]) << BigInt(8 * i);
-          for (let i = 0; i < 16; i++) alp[i] = pal[Number((bits >> BigInt(3 * i)) & 7n)];
+          alphaPalette(src[p], src[p + 1], apal);
+          alphaIndices(src, p, apal, alp);
           cp = p + 8;
         } else if (kind === 3) {
           for (let i = 0; i < 8; i++) { alp[i * 2] = (src[p + i] & 15) * 17; alp[i * 2 + 1] = (src[p + i] >> 4) * 17; }
           cp = p + 8;
         }
         const c0 = src[cp] | (src[cp + 1] << 8), c1 = src[cp + 2] | (src[cp + 3] << 8);
-        const pal = new Uint8Array(16);
-        rgb565(c0, pal, 0); rgb565(c1, pal, 4);
+        rgb565(c0, pal, 0);
+        rgb565(c1, pal, 4);
         if (c0 > c1 || kind !== 1) {
           for (let i = 0; i < 3; i++) { pal[8 + i] = (2 * pal[i] + pal[4 + i]) / 3 | 0; pal[12 + i] = (pal[i] + 2 * pal[4 + i]) / 3 | 0; }
         } else {
           for (let i = 0; i < 3; i++) { pal[8 + i] = (pal[i] + pal[4 + i]) >> 1; pal[12 + i] = 0; }
         }
         const bits = (src[cp + 4] | (src[cp + 5] << 8) | (src[cp + 6] << 16) | (src[cp + 7] << 24)) >>> 0;
+        const cut = kind === 1 && c0 <= c1;
         for (let i = 0; i < 16; i++) {
           const sel = (bits >>> (i * 2)) & 3;
           const px = bx * 4 + (i & 3), py = by * 4 + (i >> 2);
           if (px >= w || py >= h) continue;
           const o = (py * w + px) * 4;
           out[o] = pal[sel * 4]; out[o + 1] = pal[sel * 4 + 1]; out[o + 2] = pal[sel * 4 + 2];
-          out[o + 3] = kind === 1 ? ((c0 <= c1 && sel === 3) ? 0 : 255) : alp[i];
+          out[o + 3] = kind === 1 ? ((cut && sel === 3) ? 0 : 255) : alp[i];
         }
       }
     }
     return out;
   }
 
-  function decodeBC4Block(src, p, vals) {
-    const a0 = src[p], a1 = src[p + 1];
-    const pal = [a0, a1];
-    if (a0 > a1) for (let i = 1; i < 7; i++) pal.push(((7 - i) * a0 + i * a1) / 7 | 0);
-    else { for (let i = 1; i < 5; i++) pal.push(((5 - i) * a0 + i * a1) / 5 | 0); pal.push(0, 255); }
-    let bits = 0n;
-    for (let i = 0; i < 6; i++) bits |= BigInt(src[p + 2 + i]) << BigInt(8 * i);
-    for (let i = 0; i < 16; i++) vals[i] = pal[Number((bits >> BigInt(3 * i)) & 7n)];
+  function decodeBC4Block(src, p, vals, pal) {
+    alphaPalette(src[p], src[p + 1], pal);
+    alphaIndices(src, p, pal, vals);
   }
 
   function decodeBC45(src, w, h, two) {
     const out = new Uint8Array(w * h * 4);
     const bw = Math.max(1, w >> 2), bh = Math.max(1, h >> 2);
-    const r = new Uint8Array(16), g = new Uint8Array(16);
+    const r = new Uint8Array(16), g = new Uint8Array(16), pal = new Uint8Array(8);
     let p = 0;
     for (let by = 0; by < bh; by++) {
       for (let bx = 0; bx < bw; bx++) {
-        decodeBC4Block(src, p, r); p += 8;
-        if (two) { decodeBC4Block(src, p, g); p += 8; }
+        decodeBC4Block(src, p, r, pal); p += 8;
+        if (two) { decodeBC4Block(src, p, g, pal); p += 8; }
         for (let i = 0; i < 16; i++) {
           const px = bx * 4 + (i & 3), py = by * 4 + (i >> 2);
           if (px >= w || py >= h) continue;
@@ -1017,7 +1020,7 @@
     const skwA = rigged ? new THREE.Float32BufferAttribute(m.skin.w, 4) : null;
     const texObjs = new Map();
     const matObjs = new Map();
-    const maxAniso = (typeof renderer !== 'undefined' && renderer.capabilities) ? renderer.capabilities.getMaxAnisotropy() : 8;
+    const maxAniso = (typeof renderer !== 'undefined' && renderer.capabilities) ? Math.min(4, renderer.capabilities.getMaxAnisotropy()) : 4;
     const matFor = mi => {
       if (matObjs.has(mi)) return matObjs.get(mi);
       const t = result.matTex[mi];

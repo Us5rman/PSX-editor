@@ -26,17 +26,20 @@ function pakPick(paths) {
   });
 }
 
-async function loadPakModel(file) {
+async function loadPakModel(file, preset) {
   toast('Reading pak...');
   const pak = await UEPak.openPak(UEPak.Src.fromBlob(file));
-  toast('Looking for skins...');
-  const meshes = await UEPak.listSkeletalMeshes(pak, (a, b) => toast('Looking for skins... ' + a + '/' + b));
-  if (!meshes.length) throw new Error('No skeletal mesh found in this pak');
-  const pick = meshes.length === 1 ? meshes[0] : await pakPick(meshes);
-  if (!pick) return null;
+  let pick = preset;
+  if (!pick) {
+    toast('Looking for skins...');
+    const meshes = await UEPak.listSkeletalMeshes(pak, (a, b) => toast('Looking for skins... ' + a + '/' + b));
+    if (!meshes.length) throw new Error('No skeletal mesh found in this pak');
+    pick = meshes.length === 1 ? meshes[0] : await pakPick(meshes);
+    if (!pick) return null;
+  }
   const res = await UEPak.loadSkinMesh(pak, pick, s => toast('Loading ' + s));
   if (res.warn.length) console.warn('pak import:', res.warn);
   toast('Building model...');
   await new Promise(r => setTimeout(r, 30));
-  return { root: UEPak.buildThree(res), name: pick.split('/').pop(), rigged: !!res.mesh.skin };
+  return { root: UEPak.buildThree(res), name: pick.split('/').pop(), rigged: !!res.mesh.skin, pick };
 }

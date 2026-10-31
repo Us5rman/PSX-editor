@@ -25,15 +25,15 @@
 <nav id="bar">
   <button id="btnPlay">
     <svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>
-    <span>Play as Model</span>
+    <span>Play</span>
   </button>
-  <button id="btnReset">
-    <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
-    <span>Reset Model</span>
+  <button id="btnModel">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="5.5" r="2.5"/><path d="M12 8v7M7 10.5l5-2.5 5 2.5M9 21l3-6 3 6"/></svg>
+    <span>Choose Model</span>
   </button>
-  <button id="btnLoad">
-    <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
-    <span>Load Model</span>
+  <button id="btnTexture">
+    <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 9"/></svg>
+    <span>Choose Texture</span>
   </button>
   <button id="btnMap">
     <svg viewBox="0 0 24 24"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></svg>
@@ -42,7 +42,8 @@
 </nav>
 
 <div id="toast" class="hidden"></div>
-<input type="file" id="fileIn" accept=".glb,.gltf,.obj,.pak" hidden>
+<input type="file" id="fileModel" accept=".glb,.gltf,.obj,.pak" hidden>
+<input type="file" id="fileImage" accept="image/*" hidden>
 
 <script src="libs/three.min.js"></script>
 <script src="libs/CopyShader.js"></script>

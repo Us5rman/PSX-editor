@@ -1,26 +1,26 @@
 :root {
-  --bg: #16161b;
-  --panel: #202027f2;
-  --text: #f1f1f4;
-  --muted: #9a9aa6;
-  --line: #ffffff22;
-  --accent: #e08a4a;
-  --accent-text: #1a1208;
-  --sky1: #23232b;
-  --sky2: #4a4a58;
-  --g1: #2b2b31;
-  --g2: #35353d;
-  --gl: #5c5c68;
+  --bg: #000000;
+  --panel: #000000f5;
+  --text: #ffffff;
+  --muted: #a3a3a3;
+  --line: #ffffff33;
+  --accent: #ffffff;
+  --accent-text: #000000;
+  --sky1: #000000;
+  --sky2: #1c1c1c;
+  --g1: #060606;
+  --g2: #101010;
+  --gl: #4a4a4a;
 }
 [data-theme="light"] {
-  --bg: #e6e6ea; --panel: #fffffff2; --text: #1c1c20; --muted: #6b6b75; --line: #00000022;
-  --accent: #b5562a; --accent-text: #fff; --sky1: #b9c6d6; --sky2: #eef1f5; --g1: #d4d4da; --g2: #e2e2e8; --gl: #a8a8b4;
+  --bg: #ffffff; --panel: #fffffff5; --text: #000000; --muted: #666666; --line: #00000026;
+  --accent: #000000; --accent-text: #ffffff; --sky1: #ffffff; --sky2: #ececec; --g1: #f6f6f6; --g2: #ffffff; --gl: #bdbdbd;
 }
 [data-theme="midnight"] {
   --bg: #0b1020; --panel: #121a30f2; --text: #e8eeff; --muted: #8b97b8; --line: #8aa4ff2a;
   --accent: #5b8cff; --accent-text: #fff; --sky1: #070b18; --sky2: #1b2a55; --g1: #10172b; --g2: #182142; --gl: #3c4d85;
 }
-[data-theme="forest"] {
+[data-theme="flourite"] {
   --bg: #0f1a14; --panel: #15241bf2; --text: #e9f5ec; --muted: #8fb09a; --line: #9be3b22a;
   --accent: #5fc77a; --accent-text: #08150c; --sky1: #0a140e; --sky2: #274a33; --g1: #14231a; --g2: #1c3326; --gl: #3f6b50;
 }
@@ -107,3 +107,8 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .item { display: flex; align-items: center; gap: 12px; text-align: left; border: 1px solid var(--line); background: transparent; color: var(--text); padding: 10px 12px; border-radius: 14px; font: inherit; word-break: break-all; }
 .item.on { border-color: var(--accent); }
 .swatch { width: 38px; height: 38px; border-radius: 10px; flex: none; border: 1px solid var(--line); }
+
+.item .grow { flex: 1; min-width: 0; }
+.item small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+.rm { flex: none; border: 1px solid var(--line); border-radius: 10px; padding: 4px 9px; font-size: 11px; color: var(--muted); }
+.panel .btn { width: 100%; border: 1px solid var(--line); background: transparent; color: var(--text); padding: 9px; border-radius: 12px; font: inherit; }

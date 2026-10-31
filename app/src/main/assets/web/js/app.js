@@ -4,8 +4,15 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const rnd = (a, b) => a + Math.random() * (b - a);
 const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
-const cfg = { ultra: false, upscale: 0, aa: 'msaa', res: 1, theme: 'dark', map: 'grid' };
-try { Object.assign(cfg, JSON.parse(localStorage.getItem('psxviewer') || '{}')); } catch (e) { }
+const cfg = { v: 2, ultra: false, aa: 'fxaa', res: 1, fps: 60, theme: 'dark', map: 'grid' };
+try {
+  const saved = JSON.parse(localStorage.getItem('psxviewer') || '{}');
+  if (saved.v === 2) Object.assign(cfg, saved);
+  else {
+    if (saved.theme) cfg.theme = saved.theme === 'forest' ? 'flourite' : saved.theme;
+    if (saved.map) cfg.map = saved.map;
+  }
+} catch (e) { }
 function saveCfg() { try { localStorage.setItem('psxviewer', JSON.stringify(cfg)); } catch (e) { } }
 
 let toastTimer = 0;
@@ -27,7 +34,7 @@ const canvas = $('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: !haveComposer, powerPreference: 'high-performance' });
 renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.shadowMap.enabled = true;
-const maxAniso = renderer.capabilities.getMaxAnisotropy();
+const maxAniso = Math.min(4, renderer.capabilities.getMaxAnisotropy());
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(40, 1, 0.05, 500);
@@ -300,7 +307,7 @@ function rebuildComposer() {
     const c = new THREE.EffectComposer(renderer, rt);
     c.setSize(w, h);
     c.addPass(new THREE.RenderPass(scene, camera));
-    if (bloom) c.addPass(new THREE.UnrealBloomPass(new THREE.Vector2(w, h), 0.2, 0.6, 0.92));
+    if (bloom) c.addPass(new THREE.UnrealBloomPass(new THREE.Vector2(w >> 1, h >> 1), 0.2, 0.6, 0.92));
     c.addPass(new THREE.ShaderPass(THREE.GammaCorrectionShader));
     if (cfg.aa === 'fxaa' && THREE.FXAAShader) {
       const f = new THREE.ShaderPass(THREE.FXAAShader);
@@ -319,7 +326,7 @@ function applyQuality() {
   renderer.toneMapping = u ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
   renderer.toneMappingExposure = 1.05;
   renderer.shadowMap.type = u ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
-  const size = u ? Math.min(4096, renderer.capabilities.maxTextureSize) : 1024;
+  const size = u ? Math.min(2048, renderer.capabilities.maxTextureSize) : 1024;
   if (key.shadow.mapSize.x !== size) {
     key.shadow.mapSize.set(size, size);
     if (key.shadow.map) { key.shadow.map.dispose(); key.shadow.map = null; }
@@ -340,82 +347,14 @@ function applyQuality() {
 
 function resize() {
   const w = innerWidth, h = innerHeight;
-  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
   let pr = Math.max(0.4, dpr * cfg.res);
-  pr = Math.min(pr, Math.sqrt(16e6 / (w * h)));
+  pr = Math.min(pr, Math.sqrt(8e6 / (w * h)));
   renderer.setPixelRatio(pr);
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   rebuildComposer();
-}
-
-/* texture upscaling */
-
-let upscaleJob = 0;
-
-function sharpen(ctx, w, h) {
-  const strip = 256, k = 0.32;
-  for (let y0 = 0; y0 < h; y0 += strip) {
-    const ys = Math.max(0, y0 - 1), ye = Math.min(h, y0 + strip + 1);
-    const src = ctx.getImageData(0, ys, w, ye - ys);
-    const out = ctx.createImageData(w, Math.min(strip, h - y0));
-    const d = src.data, o = out.data, rows = out.height, off = y0 - ys;
-    for (let y = 0; y < rows; y++) {
-      const sy = y + off;
-      for (let x = 0; x < w; x++) {
-        const i = (sy * w + x) * 4, j = (y * w + x) * 4;
-        const edge = x === 0 || x === w - 1 || sy === 0 || sy === ye - ys - 1;
-        for (let c = 0; c < 3; c++) {
-          const v = d[i + c];
-          if (edge) { o[j + c] = v; continue; }
-          const n = d[i - w * 4 + c] + d[i + w * 4 + c] + d[i - 4 + c] + d[i + 4 + c];
-          const r = v * (1 + 4 * k) - n * k;
-          o[j + c] = r < 0 ? 0 : r > 255 ? 255 : r;
-        }
-        o[j + 3] = d[i + 3];
-      }
-    }
-    ctx.putImageData(out, 0, y0);
-  }
-}
-
-function upscaleImage(src, tw, th) {
-  const c = document.createElement('canvas');
-  c.width = tw; c.height = th;
-  const x = c.getContext('2d', { willReadFrequently: true });
-  x.imageSmoothingEnabled = true;
-  x.imageSmoothingQuality = 'high';
-  x.drawImage(src, 0, 0, tw, th);
-  sharpen(x, tw, th);
-  return c;
-}
-
-async function applyUpscale() {
-  const job = ++upscaleJob;
-  const f = cfg.upscale;
-  const texs = new Set();
-  if (model) model.holder.traverse(o => { if (o.material) [].concat(o.material).forEach(m => { if (m && m.map) texs.add(m.map); }); });
-  let n = 0, did = false;
-  for (const t of texs) {
-    n++;
-    if (t.userData.keep) continue;
-    const orig = t.userData.orig || (t.userData.orig = t.image);
-    const w = orig.width || orig.videoWidth, h = orig.height || orig.videoHeight;
-    if (!w || !h) continue;
-    const tw = Math.min(4096, w * f);
-    if (f === 0 || tw <= w) {
-      if (t.image !== orig) { t.image = orig; t.needsUpdate = true; }
-      continue;
-    }
-    toast('Upscaling textures ' + n + '/' + texs.size);
-    await new Promise(r => setTimeout(r, 20));
-    if (job !== upscaleJob) return;
-    t.image = upscaleImage(orig, tw, Math.round(h * tw / w));
-    t.needsUpdate = true;
-    did = true;
-  }
-  if (job === upscaleJob) toast(did ? 'Textures upscaled' : '', 1200);
 }
 
 /* model handling */
@@ -603,7 +542,7 @@ function findBones(root) {
   return legs || arms ? parts : null;
 }
 
-function showModel(inner, label, clips, parts) {
+function showModel(inner, label, clips, parts, kind) {
   if (model) {
     player.root.remove(model.holder);
     disposeTree(model.holder);
@@ -617,7 +556,7 @@ function showModel(inner, label, clips, parts) {
   holder.traverse(o => {
     if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; if (o.isSkinnedMesh) o.frustumCulled = false; }
   });
-  model = { holder, inner, label, anim: null };
+  model = { holder, inner, label, kind: kind || 'glb', flipY: kind === 'skeleton' || kind === 'obj', anim: null };
   if (clips && clips.length) model.anim = new MixerAnim(inner, clips);
   else if (parts) model.anim = new RigAnim(holder, parts, 1);
   else {
@@ -629,54 +568,159 @@ function showModel(inner, label, clips, parts) {
   player.vy = 0;
   applyPlayer();
   applyQuality();
-  applyUpscale();
   resetCamera();
 }
 
+let boneTex = null;
 function loadSkeleton() {
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.74, metalness: 0 });
+  if (!boneTex) {
+    boneTex = new THREE.CanvasTexture(makeBoneTexture(4096));
+    boneTex.encoding = THREE.sRGBEncoding;
+    boneTex.wrapS = boneTex.wrapT = THREE.RepeatWrapping;
+    boneTex.anisotropy = maxAniso;
+    boneTex.userData.keep = true;
+  }
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: boneTex, roughness: 0.58, metalness: 0 });
   const root = buildSkeleton(mat);
-  showModel(root, 'Skeleton', null, root.userData.parts);
-  toast('Building 4K bone texture...');
-  requestAnimationFrame(() => setTimeout(() => {
-    const tex = new THREE.CanvasTexture(makeBoneTexture(4096));
-    tex.encoding = THREE.sRGBEncoding;
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.anisotropy = maxAniso;
-    tex.userData.keep = true;
-    mat.map = tex;
-    mat.bumpMap = tex;
-    mat.bumpScale = 1.2;
-    mat.needsUpdate = true;
-    toast('', 0);
-  }, 80));
+  showModel(root, 'Skeleton', null, root.userData.parts, 'skeleton');
+  cfg.model = 'skeleton';
+  saveCfg();
 }
 
-async function loadFile(f) {
+/* app storage (IndexedDB) */
+
+let dbp = null;
+function openDb() {
+  if (!dbp) {
+    dbp = new Promise((ok, bad) => {
+      const r = indexedDB.open('psxviewer', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('files', { keyPath: 'id', autoIncrement: true });
+      r.onsuccess = () => ok(r.result);
+      r.onerror = () => bad(r.error);
+    });
+  }
+  return dbp;
+}
+async function dbTx(mode, fn) {
+  const db = await openDb();
+  return new Promise((ok, bad) => {
+    const tx = db.transaction('files', mode);
+    const rq = fn(tx.objectStore('files'));
+    tx.oncomplete = () => ok(rq && rq.result);
+    tx.onerror = () => bad(tx.error);
+    tx.onabort = () => bad(tx.error);
+  });
+}
+const dbPut = rec => dbTx('readwrite', st => st.add(rec));
+const dbDel = id => dbTx('readwrite', st => st.delete(id));
+async function dbAll(kind) {
+  const all = await dbTx('readonly', st => st.getAll());
+  return (all || []).filter(r => r.kind === kind);
+}
+const sizeText = n => (n / 1048576).toFixed(1) + ' MB';
+
+async function canvasFromBlob(blob, max) {
+  const bmp = await createImageBitmap(blob);
+  const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(bmp.width * k));
+  c.height = Math.max(1, Math.round(bmp.height * k));
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  if (bmp.close) bmp.close();
+  return c;
+}
+
+async function registerCustomMap(rec) {
+  const c = await canvasFromBlob(rec.blob, 2048);
+  const m = { id: 'c' + rec.id, name: rec.name, dbId: rec.id, rep: 40, rough: 0.9, metal: 0, sun: 0xffffff, hemi: 0.9, fog: [28, 150], make: () => c };
+  MAPS.push(m);
+  return m;
+}
+
+async function loadCustomMaps() {
+  try {
+    for (const r of await dbAll('map')) await registerCustomMap(r);
+  } catch (e) { console.warn('maps not restored', e); }
+}
+
+async function removeCustomMap(m) {
+  const i = MAPS.indexOf(m);
+  if (i >= 0) MAPS.splice(i, 1);
+  if (mapTex[m.id]) { mapTex[m.id].dispose(); delete mapTex[m.id]; }
+  try { await dbDel(m.dbId); } catch (e) { }
+  if (curMap === m) applyMap('grid');
+}
+
+async function applyModelTexture(blob) {
+  if (!model) return;
+  const c = await canvasFromBlob(blob, 4096);
+  const tex = new THREE.CanvasTexture(c);
+  tex.encoding = THREE.sRGBEncoding;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = maxAniso;
+  tex.flipY = model.flipY;
+  model.holder.traverse(o => {
+    if (!o.isMesh) return;
+    [].concat(o.material).forEach(m => {
+      if (!('origMap' in m.userData)) m.userData.origMap = m.map || null;
+      m.map = tex;
+      if (m.color) m.color.setHex(0xffffff);
+      m.needsUpdate = true;
+    });
+  });
+}
+
+function restoreModelTexture() {
+  if (!model) return;
+  model.holder.traverse(o => {
+    if (!o.isMesh) return;
+    [].concat(o.material).forEach(m => {
+      if ('origMap' in m.userData) { m.map = m.userData.origMap; m.needsUpdate = true; }
+    });
+  });
+}
+
+async function saveModel(f, pick) {
+  try {
+    const all = await dbAll('model');
+    if (all.some(r => r.name === f.name && r.blob.size === f.size)) return;
+    await dbPut({ kind: 'model', name: f.name, blob: f, pick: pick || null, added: Date.now() });
+  } catch (e) {
+    toast('Loaded, but it could not be saved to app storage', 3500);
+  }
+}
+
+async function loadFile(f, opts) {
+  opts = opts || {};
   const ext = f.name.split('.').pop().toLowerCase();
   try {
+    let pick = null;
     if (ext === 'pak') {
-      const res = await loadPakModel(f);
-      if (!res) { toast('', 0); return; }
-      showModel(res.root, res.name, null, null);
+      const res = await loadPakModel(f, opts.pick);
+      if (!res) { toast('', 0); return false; }
+      showModel(res.root, res.name, null, null, 'pak');
+      pick = res.pick;
       toast('Loaded: ' + res.name + (res.rigged ? '' : ' (no skeleton found)'), 2600);
     } else if (ext === 'glb' || ext === 'gltf') {
       toast('Reading model...');
       const buf = await f.arrayBuffer();
       const gltf = await new Promise((ok, bad) => new THREE.GLTFLoader().parse(buf, '', ok, bad));
-      showModel(gltf.scene, f.name, gltf.animations, null);
+      showModel(gltf.scene, f.name, gltf.animations, null, 'glb');
       toast('Loaded: ' + f.name, 2200);
     } else if (ext === 'obj') {
       const g = new THREE.OBJLoader().parse(await f.text());
       g.traverse(o => { if (o.isMesh) o.material = new THREE.MeshStandardMaterial({ color: 0xbdbdc4, roughness: 0.8, side: THREE.DoubleSide }); });
-      showModel(g, f.name, null, null);
+      showModel(g, f.name, null, null, 'obj');
       toast('Loaded: ' + f.name, 2200);
     } else {
       throw new Error('Unsupported file type: .' + ext);
     }
+    if (opts.save) await saveModel(f, pick);
+    return true;
   } catch (e) {
     console.error(e);
     toast(String(e.message || e), 6000);
+    return false;
   }
 }
 
@@ -711,7 +755,7 @@ function setPlay(on) {
   playing = on;
   $('hud').classList.toggle('hidden', !on);
   $('btnPlay').classList.toggle('on', on);
-  $('btnPlay').querySelector('span').textContent = on ? 'Stop Playing' : 'Play as Model';
+  $('btnPlay').querySelector('span').textContent = on ? 'Stop' : 'Play';
   controls.enabled = !on;
   input.x = input.y = 0;
   if (on) {
@@ -776,13 +820,19 @@ function update(dt, t) {
   key.target.position.copy(player.pos);
 }
 
-const clock = new THREE.Clock();
-function frame() {
+let lastRender = 0, lastInput = 0, simTime = 0;
+function frame(now) {
   requestAnimationFrame(frame);
-  const dt = Math.min(clock.getDelta(), 0.05);
-  update(dt, clock.elapsedTime);
+  const idle = !playing && now - lastInput > 2500;
+  const fps = idle ? 30 : cfg.fps;
+  if (now - lastRender < 1000 / fps - 3) return;
+  const dt = Math.min((now - lastRender) / 1000, 0.05);
+  lastRender = now;
+  simTime += dt;
+  update(dt, simTime);
   if (composer) composer.render(dt); else renderer.render(scene, camera);
 }
+['pointerdown', 'pointermove', 'wheel', 'keydown'].forEach(n => addEventListener(n, () => { lastInput = performance.now(); }, { passive: true }));
 
 /* touch and keyboard */
 
@@ -836,12 +886,12 @@ addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
 
 /* ui */
 
-const THEMES = [['dark', 'Dark'], ['light', 'Light'], ['midnight', 'Midnight'], ['forest', 'Forest'], ['sunset', 'Sunset'], ['rose', 'Rose']];
+const THEMES = [['dark', 'Dark'], ['light', 'Light'], ['midnight', 'Midnight'], ['flourite', 'Flourite'], ['sunset', 'Sunset'], ['rose', 'Rose']];
 
 function applyTheme(name) {
   cfg.theme = name;
   document.documentElement.dataset.theme = name;
-  if (curMap.id === 'grid') applyMap('grid');
+  if (curMap.id === 'grid' || curMap.dbId) applyMap(curMap.id);
   saveCfg();
 }
 
@@ -888,9 +938,9 @@ function buildSettings() {
     row.appendChild(s);
     p.appendChild(row);
   };
-  seg('Texture upscaling', 'upscale', [[0, 'Off'], [2, '2x'], [4, '4x']], applyUpscale);
   seg('Anti-aliasing', 'aa', [['off', 'Off'], ['fxaa', 'FXAA'], ['msaa', 'MSAA 4x']], rebuildComposer);
   seg('Resolution', 'res', [[0.5, '50%'], [0.75, '75%'], [1, '100%'], [1.5, '150%'], [2, '200%']], resize);
+  seg('Frame rate', 'fps', [[30, '30'], [60, '60']], () => { });
 
   const row = document.createElement('div');
   row.className = 'row';
@@ -911,36 +961,140 @@ function buildSettings() {
   row.appendChild(s);
   p.appendChild(row);
 
+  const rb = document.createElement('button');
+  rb.className = 'btn';
+  rb.textContent = 'Reset model and camera';
+  rb.onclick = () => { resetModel(); p.classList.add('hidden'); };
+  p.appendChild(rb);
+
   const note = document.createElement('div');
-  note.style.cssText = 'font-size:11px;color:var(--muted);margin-top:8px';
-  note.textContent = 'Ultra approximates ray-traced lighting with image-based reflections and soft shadows. True hardware ray tracing is not available inside a WebView.';
+  note.style.cssText = 'font-size:11px;color:var(--muted);margin-top:10px';
+  note.textContent = 'Ultra approximates ray-traced lighting with image-based reflections and soft shadows. True hardware ray tracing is not available inside a WebView. Higher resolution and Ultra use more battery.';
   p.appendChild(note);
 }
 
-function openMaps() {
+function openSheet(title) {
   const wrap = document.createElement('div');
   wrap.className = 'modal';
-  const sheet = document.createElement('div');
-  sheet.className = 'sheet';
-  sheet.innerHTML = '<h3>Choose map</h3>';
+  const sheetEl = document.createElement('div');
+  sheetEl.className = 'sheet';
+  const h = document.createElement('h3');
+  h.textContent = title;
+  sheetEl.appendChild(h);
   const close = () => wrap.remove();
-  MAPS.forEach(m => {
-    const b = document.createElement('button');
-    b.className = 'item' + (m.id === curMap.id ? ' on' : '');
-    const sky = mapSky(m);
-    const sw = document.createElement('div');
-    sw.className = 'swatch';
-    sw.style.background = 'linear-gradient(' + sky[0] + ',' + sky[1] + ')';
-    const name = document.createElement('span');
-    name.textContent = m.name;
-    b.append(sw, name);
-    b.onclick = () => { applyMap(m.id); close(); toast(m.name, 1200); };
-    sheet.appendChild(b);
-  });
-  wrap.appendChild(sheet);
+  wrap.appendChild(sheetEl);
   wrap.onclick = e => { if (e.target === wrap) close(); };
   document.body.appendChild(wrap);
+  return { sheetEl, close };
 }
+
+function sheetItem(sheetEl, label, sub, onClick, onRemove, active, swatch) {
+  const b = document.createElement('div');
+  b.className = 'item' + (active ? ' on' : '');
+  b.setAttribute('role', 'button');
+  if (swatch) {
+    const sw = document.createElement('div');
+    sw.className = 'swatch';
+    sw.style.background = swatch;
+    b.appendChild(sw);
+  }
+  const g = document.createElement('div');
+  g.className = 'grow';
+  g.textContent = label;
+  if (sub) {
+    const sm = document.createElement('small');
+    sm.textContent = sub;
+    g.appendChild(sm);
+  }
+  b.appendChild(g);
+  if (onRemove) {
+    const r = document.createElement('span');
+    r.className = 'rm';
+    r.textContent = 'Remove';
+    r.onclick = e => { e.stopPropagation(); onRemove(); };
+    b.appendChild(r);
+  }
+  b.onclick = onClick;
+  sheetEl.appendChild(b);
+  return b;
+}
+
+async function openModels() {
+  const { sheetEl, close } = openSheet('Choose model');
+  sheetItem(sheetEl, 'Skeleton', 'Built-in', () => { close(); loadSkeleton(); }, null, model && model.kind === 'skeleton');
+  let recs = [];
+  try { recs = await dbAll('model'); } catch (e) { }
+  recs.forEach(r => sheetItem(sheetEl, r.name, sizeText(r.blob.size), async () => {
+    close();
+    await loadFile(r.blob instanceof File ? r.blob : new File([r.blob], r.name), { pick: r.pick });
+  }, async () => { await dbDel(r.id); close(); openModels(); }));
+  sheetItem(sheetEl, 'Add model from files...', '.pak  .glb  .gltf  .obj  (saved to app storage)', () => { close(); $('fileModel').click(); });
+}
+
+function openMaps() {
+  const { sheetEl, close } = openSheet('Choose map');
+  MAPS.forEach(m => {
+    const sky = mapSky(m);
+    sheetItem(sheetEl, m.name, m.dbId ? 'Custom texture' : '', () => { applyMap(m.id); close(); toast(m.name, 1200); },
+      m.dbId ? async () => { await removeCustomMap(m); close(); openMaps(); } : null,
+      m.id === curMap.id, 'linear-gradient(' + sky[0] + ',' + sky[1] + ')');
+  });
+}
+
+let texTarget = 'map';
+
+function openTextures() {
+  const { sheetEl, close } = openSheet('Apply texture to');
+  sheetItem(sheetEl, 'Map', 'Ground texture, saved as a custom map', () => { close(); openTexList('map'); });
+  sheetItem(sheetEl, 'Model', 'Replaces the texture on the current model', () => { close(); openTexList('modeltex'); });
+}
+
+async function openTexList(kind) {
+  const isMap = kind === 'map';
+  const { sheetEl, close } = openSheet(isMap ? 'Map textures' : 'Model textures');
+  sheetItem(sheetEl, 'Default', isMap ? 'Back to the studio grid' : 'Restore the original texture', () => {
+    close();
+    if (isMap) applyMap('grid'); else restoreModelTexture();
+  });
+  if (isMap) {
+    MAPS.filter(m => m.dbId).forEach(m => sheetItem(sheetEl, m.name, 'Saved', () => { applyMap(m.id); close(); }, async () => { await removeCustomMap(m); close(); openTexList(kind); }, m === curMap));
+  } else {
+    let recs = [];
+    try { recs = await dbAll('modeltex'); } catch (e) { }
+    recs.forEach(r => sheetItem(sheetEl, r.name, 'Saved', async () => {
+      close();
+      try { await applyModelTexture(r.blob); toast('Texture applied', 1500); } catch (e) { toast('Could not use that image', 4000); }
+    }, async () => { await dbDel(r.id); close(); openTexList(kind); }));
+  }
+  sheetItem(sheetEl, 'Add image from files...', 'PNG, JPG, WebP (saved to app storage)', () => { close(); texTarget = kind; $('fileImage').click(); });
+}
+
+$('fileImage').onchange = async () => {
+  const f = $('fileImage').files[0];
+  $('fileImage').value = '';
+  if (!f) return;
+  try {
+    const rec = { kind: texTarget, name: f.name, blob: f, added: Date.now() };
+    try { rec.id = await dbPut(rec); } catch (e) { rec.id = 't' + Date.now(); toast('Could not save to app storage', 3000); }
+    if (texTarget === 'map') {
+      const m = await registerCustomMap(rec);
+      applyMap(m.id);
+      toast('Map texture applied: ' + f.name, 2200);
+    } else {
+      await applyModelTexture(f);
+      toast('Texture applied: ' + f.name, 2200);
+    }
+  } catch (e) {
+    console.error(e);
+    toast('Could not use that image', 4000);
+  }
+};
+
+$('fileModel').onchange = () => {
+  const f = $('fileModel').files[0];
+  $('fileModel').value = '';
+  if (f) loadFile(f, { save: true });
+};
 
 $('btnSettings').onclick = () => {
   const p = $('settings');
@@ -951,20 +1105,20 @@ document.addEventListener('pointerdown', e => {
   if (!p.classList.contains('hidden') && !p.contains(e.target) && !$('btnSettings').contains(e.target)) p.classList.add('hidden');
 });
 $('btnPlay').onclick = () => setPlay(!playing);
-$('btnReset').onclick = resetModel;
+$('btnModel').onclick = openModels;
+$('btnTexture').onclick = openTextures;
 $('btnMap').onclick = openMaps;
-$('btnLoad').onclick = () => $('fileIn').click();
-$('fileIn').onchange = () => {
-  const f = $('fileIn').files[0];
-  $('fileIn').value = '';
-  if (f) loadFile(f);
-};
 
 /* start */
 
 document.documentElement.dataset.theme = cfg.theme;
 addEventListener('resize', resize);
 resize();
-applyMap(cfg.map);
+const wantedMap = cfg.map;
+applyMap('grid');
 loadSkeleton();
-frame();
+requestAnimationFrame(frame);
+loadCustomMaps().then(() => {
+  const m = MAPS.find(x => x.id === wantedMap);
+  if (m && m.id !== 'grid') applyMap(m.id);
+});
