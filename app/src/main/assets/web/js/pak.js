@@ -421,6 +421,7 @@
         r.skip(cm * 64);
         const nbm = r.i32();
         if (nbm < 0 || nbm > nb) return null;
+        const bmStart = r.p;
         r.skip(nbm * 2);
         const nv = r.i32();
         const mbi = r.i32();
@@ -434,7 +435,7 @@
         r.skip(v.dis);
         if (mat >= nMats || base % 3 !== 0 || ntri <= 0 || nv <= 0 || bv !== vsum || mbi < 1 || mbi > 16) return null;
         vsum += nv;
-        secs.push({ mat, base, ntri, bv, nv });
+        secs.push({ mat, base, ntri, bv, nv, bmStart, nbm });
       }
       return { secs, end: r.p, nVerts: vsum };
     } catch (e) {
@@ -484,9 +485,21 @@
       break;
     }
     if (boneStart < 0) throw new Error('Unexpected mesh layout (skeleton)');
-    r.p = boneStart + 4 + nb * 12;
+    r.p = boneStart + 4;
+    const bones = [];
+    for (let i = 0; i < nb; i++) {
+      const ni = r.i32();
+      r.i32();
+      const par = r.i32();
+      bones.push({ name: names[ni] || ('bone_' + i), parent: par });
+    }
     const np = r.i32();
-    r.skip(np * 40);
+    for (let i = 0; i < np; i++) {
+      const q = [r.f32(), r.f32(), r.f32(), r.f32()];
+      const t = [r.f32(), r.f32(), r.f32()];
+      const sc = [r.f32(), r.f32(), r.f32()];
+      if (i < nb) { bones[i].q = q; bones[i].t = t; bones[i].s = sc; }
+    }
     const nmap = r.i32();
     r.skip(nmap * 12);
 
@@ -552,7 +565,61 @@
       if (ues === 8) { uv[i * 2] = dv.getFloat32(b, true); uv[i * 2 + 1] = dv.getFloat32(b + 4, true); }
       else { uv[i * 2] = half(dv.getUint16(b, true)); uv[i * 2 + 1] = half(dv.getUint16(b + 2, true)); }
     }
-    return { mats, secs, pos, nor, uv, idx, nVerts: N };
+    let skin = null;
+    try { skin = readSkinWeights(dv, o + N * stride, N, secs, nb); } catch (e) { skin = null; }
+    return { mats, secs, pos, nor, uv, idx, nVerts: N, bones, skin };
+  }
+
+  function weightsLookRight(dv, start, stride, N, infl, ib, wb) {
+    let good = 0, tried = 0;
+    const step = Math.max(1, Math.floor(N / 200));
+    for (let v = 0; v < N; v += step) {
+      const b = start + v * stride + infl * ib;
+      let sum = 0;
+      for (let k = 0; k < infl; k++) sum += wb === 1 ? dv.getUint8(b + k) : dv.getUint16(b + k * 2, true);
+      const full = wb === 1 ? 255 : 65535;
+      if (Math.abs(sum - full) <= (wb === 1 ? 6 : 200)) good++;
+      tried++;
+    }
+    return tried > 0 && good / tried > 0.95;
+  }
+
+  function readSkinWeights(dv, from, N, secs, nb) {
+    const layouts = { 8: [[4, 1, 1]], 12: [[4, 2, 1]], 16: [[8, 1, 1], [4, 2, 2]], 24: [[8, 2, 1]], 32: [[8, 2, 2]] };
+    for (let q = from; q < from + 256; q++) {
+      if (q + 8 > dv.byteLength) break;
+      const e = dv.getUint32(q, true), c = dv.getUint32(q + 4, true);
+      if (e === 0 || e > 64 || c === 0 || c % N !== 0) continue;
+      const st = c / N;
+      const opts = layouts[st];
+      if (!opts) continue;
+      for (const [infl, ib, wb] of opts) {
+        const start = q + 8;
+        if (!weightsLookRight(dv, start, st, N, infl, ib, wb)) continue;
+        const gi = new Uint16Array(N * 4), gw = new Float32Array(N * 4);
+        const full = wb === 1 ? 255 : 65535;
+        for (const sc of secs) {
+          const bm = new Uint16Array(sc.nbm);
+          for (let i = 0; i < sc.nbm; i++) bm[i] = dv.getUint16(sc.bmStart + i * 2, true);
+          for (let v = sc.bv; v < sc.bv + sc.nv; v++) {
+            const b = start + v * st;
+            const list = [];
+            for (let k = 0; k < infl; k++) {
+              const li = ib === 1 ? dv.getUint8(b + k) : dv.getUint16(b + k * 2, true);
+              const w = wb === 1 ? dv.getUint8(b + infl * ib + k) : dv.getUint16(b + infl * ib + k * 2, true);
+              if (w > 0) list.push([li < bm.length ? bm[li] : 0, w / full]);
+            }
+            list.sort((a, b2) => b2[1] - a[1]);
+            let tot = 0;
+            for (let k = 0; k < 4 && k < list.length; k++) tot += list[k][1];
+            for (let k = 0; k < 4 && k < list.length; k++) { gi[v * 4 + k] = list[k][0]; gw[v * 4 + k] = list[k][1] / tot; }
+            if (!list.length) gw[v * 4] = 1;
+          }
+        }
+        return { idx: gi, w: gw };
+      }
+    }
+    return null;
   }
 
   function half(h) {
@@ -565,6 +632,7 @@
   // UE is Z-up, left-handed, centimetres; the editor wants Y-up, right-handed.
   function toEditorSpace(mesh) {
     const N = mesh.nVerts, p = mesh.pos, n = mesh.nor, k = 0.01;
+    let T = [0, -1, 0, 0, 0, 1, 1, 0, 0];
     for (let i = 0; i < N; i++) {
       const x = p[i * 3], y = p[i * 3 + 1], z = p[i * 3 + 2];
       p[i * 3] = -y * k; p[i * 3 + 1] = z * k; p[i * 3 + 2] = x * k;
@@ -584,7 +652,10 @@
         n[i * 3] = nz; n[i * 3 + 2] = -nx;
       }
       mesh.rotated = true;
+      T = mul3([0, 0, 1, 0, 1, 0, -1, 0, 0], T);
     }
+    mesh.T = T;
+    bakeBones(mesh);
     const idx = mesh.idx;
     let agree = 0, total = 0;
     const step = Math.max(3, Math.floor(idx.length / 3 / 4000) * 3);
@@ -602,6 +673,54 @@
       mesh.flipped = true;
     }
     return mesh;
+  }
+
+  function mul3(a, b) {
+    const o = new Array(9).fill(0);
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) for (let k = 0; k < 3; k++) o[i * 3 + j] += a[i * 3 + k] * b[k * 3 + j];
+    return o;
+  }
+
+  function quatMat(q, sc) {
+    const x = q[0], y = q[1], z = q[2], w = q[3];
+    const l = Math.sqrt(x * x + y * y + z * z + w * w) || 1;
+    const X = x / l, Y = y / l, Z = z / l, W = w / l;
+    const r = [
+      1 - 2 * (Y * Y + Z * Z), 2 * (X * Y - Z * W), 2 * (X * Z + Y * W),
+      2 * (X * Y + Z * W), 1 - 2 * (X * X + Z * Z), 2 * (Y * Z - X * W),
+      2 * (X * Z - Y * W), 2 * (Y * Z + X * W), 1 - 2 * (X * X + Y * Y)
+    ];
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) r[i * 3 + j] *= sc[j];
+    return r;
+  }
+
+  function bakeBones(mesh) {
+    const bones = mesh.bones;
+    if (!bones || !bones.length || !bones[0].q) { mesh.bones = null; return; }
+    const T = mesh.T, Tt = [T[0], T[3], T[6], T[1], T[4], T[7], T[2], T[5], T[8]];
+    const lin = new Array(bones.length), pos = new Array(bones.length);
+    for (let i = 0; i < bones.length; i++) {
+      const b = bones[i];
+      const A = quatMat(b.q, b.s);
+      const par = b.parent;
+      if (par >= 0 && par < i) {
+        const PA = lin[par], PT = pos[par];
+        lin[i] = mul3(PA, A);
+        pos[i] = [
+          PA[0] * b.t[0] + PA[1] * b.t[1] + PA[2] * b.t[2] + PT[0],
+          PA[3] * b.t[0] + PA[4] * b.t[1] + PA[5] * b.t[2] + PT[1],
+          PA[6] * b.t[0] + PA[7] * b.t[1] + PA[8] * b.t[2] + PT[2]
+        ];
+      } else { lin[i] = A; pos[i] = b.t.slice(); }
+    }
+    mesh.boneWorld = bones.map((b, i) => {
+      const L = mul3(mul3(T, lin[i]), Tt);
+      const t = pos[i];
+      const tx = (T[0] * t[0] + T[1] * t[1] + T[2] * t[2]) * 0.01;
+      const ty = (T[3] * t[0] + T[4] * t[1] + T[5] * t[2]) * 0.01;
+      const tz = (T[6] * t[0] + T[7] * t[1] + T[8] * t[2]) * 0.01;
+      return [L[0], L[3], L[6], 0, L[1], L[4], L[7], 0, L[2], L[5], L[8], 0, tx, ty, tz, 1];
+    });
   }
 
   // textures
@@ -878,50 +997,84 @@
     return { mesh, matTex, warn };
   }
 
+  function canvasFromTexture(t) {
+    const c = document.createElement('canvas');
+    c.width = t.w; c.height = t.h;
+    const x = c.getContext('2d');
+    const id = x.createImageData(t.w, t.h);
+    id.data.set(t.rgba);
+    x.putImageData(id, 0, 0);
+    return c;
+  }
+
   function buildThree(result) {
     const m = result.mesh;
+    const rigged = !!(m.skin && m.bones && m.boneWorld);
     const posA = new THREE.BufferAttribute(m.pos, 3);
     const norA = new THREE.BufferAttribute(m.nor, 3);
     const uvA = new THREE.BufferAttribute(m.uv, 2);
+    const skiA = rigged ? new THREE.Uint16BufferAttribute(m.skin.idx, 4) : null;
+    const skwA = rigged ? new THREE.Float32BufferAttribute(m.skin.w, 4) : null;
     const texObjs = new Map();
     const matObjs = new Map();
+    const maxAniso = (typeof renderer !== 'undefined' && renderer.capabilities) ? renderer.capabilities.getMaxAnisotropy() : 8;
     const matFor = mi => {
       if (matObjs.has(mi)) return matObjs.get(mi);
       const t = result.matTex[mi];
       let map = null;
       if (t) {
         if (!texObjs.has(t)) {
-          const c = document.createElement('canvas');
-          c.width = t.w; c.height = t.h;
-          const x = c.getContext('2d');
-          const id = x.createImageData(t.w, t.h);
-          id.data.set(t.rgba);
-          x.putImageData(id, 0, 0);
-          const tx = new THREE.CanvasTexture(c);
+          const tx = new THREE.CanvasTexture(canvasFromTexture(t));
           tx.flipY = false;
           tx.encoding = THREE.sRGBEncoding;
           tx.wrapS = tx.wrapT = THREE.RepeatWrapping;
-          if (typeof R !== 'undefined' && R.capabilities) tx.anisotropy = R.capabilities.getMaxAnisotropy();
+          tx.anisotropy = maxAniso;
           texObjs.set(t, tx);
         }
         map = texObjs.get(t);
       }
-      const mat = new THREE.MeshLambertMaterial({ map, color: map ? 0xffffff : 0xcccccc, side: THREE.DoubleSide });
+      const mat = new THREE.MeshStandardMaterial({ map, color: map ? 0xffffff : 0xcccccc, roughness: 0.78, metalness: 0, side: THREE.DoubleSide, skinning: rigged });
       if (t && t.mask) mat.alphaTest = 0.5;
       matObjs.set(mi, mat);
       return mat;
     };
+
     const g = new THREE.Group();
+    let skeleton = null, bones = null;
+    if (rigged) {
+      bones = m.bones.map(b => { const o = new THREE.Bone(); o.name = b.name; return o; });
+      const worlds = m.boneWorld.map(a => new THREE.Matrix4().fromArray(a));
+      m.bones.forEach((b, i) => {
+        let local = worlds[i];
+        if (b.parent >= 0 && b.parent < i) local = worlds[b.parent].clone().invert().multiply(worlds[i]);
+        local.decompose(bones[i].position, bones[i].quaternion, bones[i].scale);
+        if (b.parent >= 0 && b.parent < i) bones[b.parent].add(bones[i]); else g.add(bones[i]);
+      });
+      g.updateMatrixWorld(true);
+      skeleton = new THREE.Skeleton(bones);
+    }
+
     m.secs.forEach((s, i) => {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', posA);
       geo.setAttribute('normal', norA);
       geo.setAttribute('uv', uvA);
+      if (rigged) { geo.setAttribute('skinIndex', skiA); geo.setAttribute('skinWeight', skwA); }
       geo.setIndex(new THREE.BufferAttribute(m.idx.slice(s.base, s.base + s.ntri * 3), 1));
-      const mesh = new THREE.Mesh(geo, matFor(s.mat));
+      let mesh;
+      if (rigged) {
+        mesh = new THREE.SkinnedMesh(geo, matFor(s.mat));
+        mesh.frustumCulled = false;
+        g.add(mesh);
+        mesh.bind(skeleton, new THREE.Matrix4());
+      } else {
+        mesh = new THREE.Mesh(geo, matFor(s.mat));
+        g.add(mesh);
+      }
       mesh.name = (m.mats[s.mat] && m.mats[s.mat].slot) || ('section_' + i);
-      g.add(mesh);
     });
+    g.userData.bones = bones;
+    g.userData.rigged = rigged;
     return g;
   }
 

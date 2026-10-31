@@ -1,21 +1,65 @@
 <!DOCTYPE html>
-<html lang="fa" dir="rtl"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>PSX کاراکتر ماژولار</title>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>PSX Viewer</title>
 <link rel="stylesheet" href="css/style.css">
-</head><body>
-<canvas id="c"></canvas><div id="bar"></div><div id="msg">در حال بارگذاری مدل...</div>
-<div id="panel"><div id="grip"></div><div id="sub"></div><div id="body"></div><div id="tabs"></div></div>
-<script src="js/debug.js"></script>
-<script src="js/native-bridge.js"></script>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<button id="btnSettings" class="round" aria-label="Settings">
+  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+</button>
+
+<div id="settings" class="panel hidden"></div>
+
+<div id="hud" class="hidden">
+  <div id="stick"><div id="knob"></div></div>
+  <button id="jump" class="round big" aria-label="Jump">
+    <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+  </button>
+</div>
+
+<nav id="bar">
+  <button id="btnPlay">
+    <svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>
+    <span>Play as Model</span>
+  </button>
+  <button id="btnReset">
+    <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+    <span>Reset Model</span>
+  </button>
+  <button id="btnLoad">
+    <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+    <span>Load Model</span>
+  </button>
+  <button id="btnMap">
+    <svg viewBox="0 0 24 24"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></svg>
+    <span>Choose Map</span>
+  </button>
+</nav>
+
+<div id="toast" class="hidden"></div>
+<input type="file" id="fileIn" accept=".glb,.gltf,.obj,.pak" hidden>
+
 <script src="libs/three.min.js"></script>
+<script src="libs/CopyShader.js"></script>
+<script src="libs/LuminosityHighPassShader.js"></script>
+<script src="libs/GammaCorrectionShader.js"></script>
+<script src="libs/FXAAShader.js"></script>
+<script src="libs/EffectComposer.js"></script>
+<script src="libs/RenderPass.js"></script>
+<script src="libs/ShaderPass.js"></script>
+<script src="libs/MaskPass.js"></script>
+<script src="libs/UnrealBloomPass.js"></script>
 <script src="libs/OrbitControls.js"></script>
 <script src="libs/GLTFLoader.js"></script>
-<script src="libs/GLTFExporter.js"></script>
 <script src="libs/OBJLoader.js"></script>
-<script src="js/data-glb.js"></script>
-<script src="js/data-rig.js"></script>
 <script src="js/pak.js"></script>
-<script src="js/app.js"></script>
 <script src="js/pak-ui.js"></script>
-</body></html>
+<script src="js/skeleton.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
