@@ -369,7 +369,7 @@ function disposeTree(o) {
     if (n.geometry) n.geometry.dispose();
     [].concat(n.material || []).forEach(m => {
       ['map', 'normalMap', 'bumpMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap'].forEach(k => {
-        if (m[k] && !m[k].userData.keep) m[k].dispose();
+        if (m[k] && !m[k].keep) m[k].dispose();
       });
       m.dispose();
     });
@@ -578,7 +578,7 @@ function loadSkeleton() {
     boneTex.encoding = THREE.sRGBEncoding;
     boneTex.wrapS = boneTex.wrapT = THREE.RepeatWrapping;
     boneTex.anisotropy = maxAniso;
-    boneTex.userData.keep = true;
+    boneTex.keep = true;
   }
   const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: boneTex, roughness: 0.58, metalness: 0 });
   const root = buildSkeleton(mat);
@@ -649,35 +649,6 @@ async function removeCustomMap(m) {
   if (mapTex[m.id]) { mapTex[m.id].dispose(); delete mapTex[m.id]; }
   try { await dbDel(m.dbId); } catch (e) { }
   if (curMap === m) applyMap('grid');
-}
-
-async function applyModelTexture(blob) {
-  if (!model) return;
-  const c = await canvasFromBlob(blob, 4096);
-  const tex = new THREE.CanvasTexture(c);
-  tex.encoding = THREE.sRGBEncoding;
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.anisotropy = maxAniso;
-  tex.flipY = model.flipY;
-  model.holder.traverse(o => {
-    if (!o.isMesh) return;
-    [].concat(o.material).forEach(m => {
-      if (!('origMap' in m.userData)) m.userData.origMap = m.map || null;
-      m.map = tex;
-      if (m.color) m.color.setHex(0xffffff);
-      m.needsUpdate = true;
-    });
-  });
-}
-
-function restoreModelTexture() {
-  if (!model) return;
-  model.holder.traverse(o => {
-    if (!o.isMesh) return;
-    [].concat(o.material).forEach(m => {
-      if ('origMap' in m.userData) { m.map = m.userData.origMap; m.needsUpdate = true; }
-    });
-  });
 }
 
 async function saveModel(f, pick) {
@@ -1028,7 +999,7 @@ async function openModels() {
     close();
     await loadFile(r.blob instanceof File ? r.blob : new File([r.blob], r.name), { pick: r.pick });
   }, async () => { await dbDel(r.id); close(); openModels(); }));
-  sheetItem(sheetEl, 'Add model from files...', '.pak  .glb  .gltf  .obj  (saved to app storage)', () => { close(); $('fileModel').click(); });
+  sheetItem(sheetEl, 'Add model from files...', '.pak  .glb  .gltf  .obj', () => { close(); $('fileModel').click(); });
 }
 
 function openMaps() {
@@ -1039,34 +1010,7 @@ function openMaps() {
       m.dbId ? async () => { await removeCustomMap(m); close(); openMaps(); } : null,
       m.id === curMap.id, 'linear-gradient(' + sky[0] + ',' + sky[1] + ')');
   });
-}
-
-let texTarget = 'map';
-
-function openTextures() {
-  const { sheetEl, close } = openSheet('Apply texture to');
-  sheetItem(sheetEl, 'Map', 'Ground texture, saved as a custom map', () => { close(); openTexList('map'); });
-  sheetItem(sheetEl, 'Model', 'Replaces the texture on the current model', () => { close(); openTexList('modeltex'); });
-}
-
-async function openTexList(kind) {
-  const isMap = kind === 'map';
-  const { sheetEl, close } = openSheet(isMap ? 'Map textures' : 'Model textures');
-  sheetItem(sheetEl, 'Default', isMap ? 'Back to the studio grid' : 'Restore the original texture', () => {
-    close();
-    if (isMap) applyMap('grid'); else restoreModelTexture();
-  });
-  if (isMap) {
-    MAPS.filter(m => m.dbId).forEach(m => sheetItem(sheetEl, m.name, 'Saved', () => { applyMap(m.id); close(); }, async () => { await removeCustomMap(m); close(); openTexList(kind); }, m === curMap));
-  } else {
-    let recs = [];
-    try { recs = await dbAll('modeltex'); } catch (e) { }
-    recs.forEach(r => sheetItem(sheetEl, r.name, 'Saved', async () => {
-      close();
-      try { await applyModelTexture(r.blob); toast('Texture applied', 1500); } catch (e) { toast('Could not use that image', 4000); }
-    }, async () => { await dbDel(r.id); close(); openTexList(kind); }));
-  }
-  sheetItem(sheetEl, 'Add image from files...', 'PNG, JPG, WebP (saved to app storage)', () => { close(); texTarget = kind; $('fileImage').click(); });
+  sheetItem(sheetEl, 'Add map from files...', 'PNG, JPG, WebP', () => { close(); $('fileImage').click(); });
 }
 
 $('fileImage').onchange = async () => {
@@ -1074,16 +1018,11 @@ $('fileImage').onchange = async () => {
   $('fileImage').value = '';
   if (!f) return;
   try {
-    const rec = { kind: texTarget, name: f.name, blob: f, added: Date.now() };
+    const rec = { kind: 'map', name: f.name, blob: f, added: Date.now() };
     try { rec.id = await dbPut(rec); } catch (e) { rec.id = 't' + Date.now(); toast('Could not save to app storage', 3000); }
-    if (texTarget === 'map') {
-      const m = await registerCustomMap(rec);
-      applyMap(m.id);
-      toast('Map texture applied: ' + f.name, 2200);
-    } else {
-      await applyModelTexture(f);
-      toast('Texture applied: ' + f.name, 2200);
-    }
+    const m = await registerCustomMap(rec);
+    applyMap(m.id);
+    toast('Map added: ' + f.name, 2200);
   } catch (e) {
     console.error(e);
     toast('Could not use that image', 4000);
@@ -1106,7 +1045,6 @@ document.addEventListener('pointerdown', e => {
 });
 $('btnPlay').onclick = () => setPlay(!playing);
 $('btnModel').onclick = openModels;
-$('btnTexture').onclick = openTextures;
 $('btnMap').onclick = openMaps;
 
 /* start */
